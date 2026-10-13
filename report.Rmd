@@ -1,0 +1,398 @@
+---
+title: "Medical Data Cleaning Pipeline"
+subtitle: "A reproducible workflow for clinical data preparation"
+author: "Eugene Oyedemi"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  dpi        = 300
+)
+```
+
+# 1. Overview
+
+This report demonstrates a reproducible pipeline for cleaning clinical data
+before statistical analysis. Using the **Pima Indians Diabetes** dataset,
+I show how to:
+
+1. Inspect raw data for structural problems
+2. Identify **biologically impossible values** that are actually disguised missing data
+3. Visualize missingness patterns
+4. Compare two missing-data strategies (complete-case vs median imputation)
+5. Produce a publication-ready **Table 1** and a **300 dpi figure**
+
+**Why this matters:** most real-world clinical datasets contain coded missing
+values (zeros, 999, -1) that silently corrupt analyses if not detected. This
+pipeline catches them and documents every decision.
+
+---
+
+# 2. Setup
+
+```{r libraries}
+library(tidyverse)   # data manipulation and plotting
+library(janitor)     # cleaning helpers
+library(skimr)       # rich descriptive summaries
+library(naniar)      # missing-data visualization
+library(gtsummary)   # publication-ready tables
+library(here)        # reproducible file paths
+```
+
+```{r paths}
+# Define directories relative to project root
+dir_raw     <- here("data", "raw")
+dir_cleaned <- here("data", "cleaned")
+dir_figures <- here("figures")
+dir_output  <- here("output")
+
+# Create output directories if they don't exist
+walk(c(dir_cleaned, dir_figures, dir_output),
+     ~ dir.create(.x, showWarnings = FALSE, recursive = TRUE))
+```
+
+---
+
+# 3. Load the raw data
+
+The dataset contains `r 768` observations of `r 8` clinical predictors plus a
+binary outcome (`Outcome`: 1 = diabetes, 0 = no diabetes).
+
+```{r load-data}
+# Define the URL and the destination file path
+url <- "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv"
+dest_file <- here("data", "raw", "pima_diabetes.csv")
+
+# Download the file if it doesn't already exist
+if (!file.exists(dest_file)) {
+  download.file(url, dest_file, mode = "wb")
+}
+
+# Load the data to verify it's the correct version
+diabetes_raw <- read_csv(dest_file, col_names = FALSE)
+
+# Check for the impossible zeros (the values should match these)
+# Note: This CSV does not have column headers, so we use column positions.
+sum(diabetes_raw$X2 == 0) # Glucose: should be 5
+sum(diabetes_raw$X6 == 0) # BMI: should be 11
+sum(diabetes_raw$X5 == 0) # Insulin: should be 374
+```
+
+```{r rename-variables}
+# Add the original column names
+colnames(diabetes_raw) <- c(
+  "Pregnancies",
+  "Glucose",
+  "BloodPressure",
+  "SkinThickness",
+  "Insulin",
+  "BMI",
+  "DiabetesPedigreeFunction",
+  "Age",
+  "Outcome"
+)
+```
+
+```{r glimpse}
+glimpse(diabetes_raw)
+```
+
+We have `r nrow(diabetes_raw)` rows and `r ncol(diabetes_raw)` columns, all
+numeric or integer. No `NA` values are visible yet — which is exactly the trap
+we investigate next.
+
+---
+
+# 4. First inspection
+
+```{r skim}
+skim(diabetes_raw)
+```
+
+**What to notice:**
+
+- `Insulin` and `SkinThickness` have very wide ranges and suspicious lows.
+- Several variables have a **minimum of 0**. In a living human, glucose, blood
+  pressure, BMI, insulin, and skin thickness cannot be zero. These zeros are
+  **impossible values**, and in this dataset they function as missing-data codes.
+
+---
+
+# 5. Identify impossible zeros
+
+The following variables cannot biologically be zero:
+
+| Variable | Meaning | Zero is impossible because |
+|---|---|---|
+| Glucose | Plasma glucose (mg/dL) | Fatal at 0 |
+| BloodPressure | Diastolic BP (mm Hg) | Fatal at 0 |
+| SkinThickness | Triceps skinfold (mm) | Not physically possible |
+| Insulin | Serum insulin (mu U/mL) | Not compatible with life |
+| BMI | Body mass index | Not physically possible |
+
+```{r count-zeros}
+vars_with_impossible_zeros <- c(
+  "Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI"
+)
+
+zero_summary <- diabetes_raw %>%
+  summarise(across(all_of(vars_with_impossible_zeros),
+                   ~ sum(.x == 0, na.rm = TRUE))) %>%
+  pivot_longer(everything(),
+               names_to  = "variable",
+               values_to = "n_zeros") %>%
+  mutate(pct_zeros = round(100 * n_zeros / nrow(diabetes_raw), 1))
+
+zero_summary
+```
+
+`Insulin` is the worst offender — `r zero_summary %>% filter(variable == "Insulin") %>% pull(pct_zeros)`% of its values are zeros. `SkinThickness` follows at
+`r zero_summary %>% filter(variable == "SkinThickness") %>% pull(pct_zeros)`%.
+
+We now recode these zeros to `NA` so R treats them as genuinely missing.
+
+---
+
+# 6. Recode impossible zeros to NA
+
+```{r recode-zeros}
+diabetes_clean <- diabetes_raw %>%
+  mutate(across(all_of(vars_with_impossible_zeros),
+                ~ na_if(.x, 0)))
+```
+
+```{r verify-recoding}
+diabetes_clean %>%
+  summarise(across(all_of(vars_with_impossible_zeros),
+                   ~ sum(is.na(.x)))) %>%
+  pivot_longer(everything(),
+               names_to  = "variable",
+               values_to = "n_missing")
+```
+
+The missing counts now match the zero counts from Section 5, confirming the
+recode worked.
+
+---
+
+# 7. Visualize missingness
+
+```{r miss-var, fig.height=5}
+gg_miss_var(diabetes_clean) +
+  labs(title = "Missing values by variable",
+       subtitle = "After recoding biologically impossible zeros",
+       x = "Number of missing values",
+       y = NULL) +
+  theme_minimal(base_size = 13)
+```
+
+```{r miss-upset, fig.height=5}
+gg_miss_upset(diabetes_clean,
+              nsets = length(vars_with_impossible_zeros))
+```
+
+**Reading the upset plot:** the bars show how many rows are missing in each
+*combination* of variables. Most rows are complete; a minority are missing
+only `Insulin`, only `SkinThickness`, or both.
+
+---
+
+# 8. Handle missing data — two strategies
+
+There is no universally correct answer. What matters is that the choice is
+**documented and defensible**. I compare two standard approaches.
+
+## 8.1 Complete-case analysis
+
+Rows with any missing value are removed.
+
+```{r complete-cases}
+diabetes_complete <- diabetes_clean %>%
+  drop_na()
+
+n_complete <- nrow(diabetes_complete)
+n_raw      <- nrow(diabetes_clean)
+```
+
+This retains **`r n_complete`** of `r n_raw` rows
+(`r round(100 * n_complete / n_raw, 1)`%).
+
+**Pros:** Simple, no assumptions, unbiased if data are MCAR.
+**Cons:** Loses `r n_raw - n_complete` rows, reduces statistical power.
+
+## 8.2 Median imputation
+
+Missing values are replaced with the column median.
+
+```{r median-imputation}
+diabetes_imputed <- diabetes_clean %>%
+  mutate(across(all_of(vars_with_impossible_zeros),
+                ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
+```
+
+**Pros:** Retains all rows.
+**Cons:** Shrinks variance, distorts distributions, underestimates uncertainty.
+
+**Recommendation for this dataset:** complete-case analysis, because
+`Insulin` is missing in nearly half the rows and imputing it would create
+more bias than it removes. In a real project I would discuss this with the
+client and consider multiple imputation (`mice`) if the missingness were
+more moderate.
+
+---
+
+# 9. Descriptive statistics
+
+```{r descriptives}
+diabetes_complete %>%
+  select(-Outcome) %>%
+  skim() %>%
+  print()
+```
+
+---
+
+# 10. Table 1 — characteristics by outcome
+
+```{r table1}
+table1 <- diabetes_complete %>%
+  mutate(Outcome = factor(Outcome,
+                          levels = c(0, 1),
+                          labels = c("No Diabetes", "Diabetes"))) %>%
+  tbl_summary(
+    by = Outcome,
+    statistic = list(
+      all_continuous()  ~ "{median} ({p25}, {p75})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 1,
+    label = list(
+      Pregnancies              ~ "Number of pregnancies",
+      Glucose                  ~ "Plasma glucose (mg/dL)",
+      BloodPressure            ~ "Diastolic blood pressure (mm Hg)",
+      SkinThickness            ~ "Triceps skinfold (mm)",
+      Insulin                  ~ "Serum insulin (mu U/mL)",
+      BMI                      ~ "Body mass index",
+      DiabetesPedigreeFunction ~ "Diabetes pedigree function",
+      Age                      ~ "Age (years)"
+    )
+  ) %>%
+  add_p() %>%
+  add_n() %>%
+  bold_labels() %>%
+  modify_header(label = "**Characteristic**")
+
+table1
+```
+
+```{r save-table1, include=FALSE}
+table1 %>%
+  as_gt() %>%
+  gt::gtsave(filename = file.path(dir_output, "table1_by_outcome.html"))
+```
+
+**Interpretation:** the diabetes group has notably higher median glucose,
+BMI, and age. Formal testing is deferred to the analysis stage — this report
+is about *cleaning*, not inference.
+
+---
+
+# 11. Publication-ready figure
+
+```{r figure-glucose, fig.height=5.5}
+fig_glucose <- diabetes_complete %>%
+  mutate(Outcome = factor(Outcome,
+                          levels = c(0, 1),
+                          labels = c("No Diabetes", "Diabetes"))) %>%
+  ggplot(aes(x = Outcome, y = Glucose, fill = Outcome)) +
+  geom_boxplot(alpha = 0.75, outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.12, alpha = 0.25, size = 1) +
+  scale_fill_manual(values = c("#4C72B0", "#C44E52")) +
+  labs(
+    title    = "Plasma glucose by diabetes status",
+    subtitle = paste0("Pima Indians Diabetes dataset (n = ",
+                      n_complete, " complete cases)"),
+    x        = NULL,
+    y        = "Plasma glucose (mg/dL)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title      = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+fig_glucose
+```
+
+```{r save-figure, include=FALSE}
+ggsave(file.path(dir_figures, "glucose_by_outcome.png"),
+       fig_glucose, width = 7, height = 5, dpi = 300)
+ggsave(file.path(dir_figures, "glucose_by_outcome.pdf"),
+       fig_glucose, width = 7, height = 5)
+```
+
+Both PNG (300 dpi) and PDF versions are saved — journals typically require one
+or the other.
+
+---
+
+# 12. Save the cleaned dataset
+
+```{r save-cleaned}
+write_csv(diabetes_complete,
+          file.path(dir_cleaned, "diabetes_complete.csv"))
+
+write_csv(diabetes_imputed,
+          file.path(dir_cleaned, "diabetes_imputed.csv"))
+```
+
+---
+
+# 13. Summary of decisions
+
+| Decision | Choice | Justification |
+|---|---|---|
+| Impossible zeros | Recoded to `NA` | Zeros are biologically impossible; treat as missing |
+| Missing-data strategy | Complete-case | Insulin missing in ~49% of rows; imputation would bias results |
+| Final sample size | `r n_complete` rows | Retains sufficient power for downstream modelling |
+| Figure format | PNG 300 dpi + PDF | Meets journal submission requirements |
+
+---
+
+# 14. Reproducibility
+
+```{r session-info}
+sessionInfo()
+```
+
+**To reproduce this report:**
+
+1. Clone the repository.
+2. Open `medical-data-cleaning-pipeline.Rproj` in RStudio.
+3. Ensure `data/raw/pima_diabetes.csv` is present.
+4. Click **Knit** (or run `rmarkdown::render("report.Rmd")`).
+
+All paths use `here()` so the project works on any machine.
+
+---
+
+*Prepared by Eugene Oyedemi*
+*https://www.linkedin.com/in/eugene-oyedemi-343152300?utm_source=share_via&utm_content=profile&utm_medium=member_android*
+*https://connect.posit.cloud/eugeneoyedemi*

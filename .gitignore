@@ -1,0 +1,24 @@
+# RStudio user-specific files
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# renv (if you use it later)
+renv/library/
+renv/staging/
+renv/python/
+renv/sandbox/
+
+# R output and cache
+*.Rproj.user
+*.knit.md
+*_cache/
+
+# Temporary files
+*.tmp
+~$*
+
+# OS clutter
+.DS_Store
+Thumbs.db
