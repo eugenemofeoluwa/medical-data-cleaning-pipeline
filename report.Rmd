@@ -1,6 +1,6 @@
 ---
-title: "Predicting Diabetes: Logistic Regression and ROC Analysis"
-subtitle: "A reproducible workflow for binary outcome modelling in clinical data"
+title: "Medical Data Cleaning Pipeline"
+subtitle: "A reproducible R Markdown workflow for cleaning clinical data, handling biologically impossible values, and producing publication-ready tables and figures."
 author: "Eugene Mofeoluwa"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
