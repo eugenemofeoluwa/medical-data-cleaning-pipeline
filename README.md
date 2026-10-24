@@ -2,7 +2,7 @@
 
 A reproducible R Markdown workflow for cleaning clinical data, handling biologically impossible values, and producing publication-ready tables and figures.
 
-**📄 [View the rendered report](report.html)**
+**📄 [View the rendered report](https://eugenemofeoluwa.github.io/medical-data-cleaning-pipeline/report.html)**
 
 ---
 

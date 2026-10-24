@@ -1,7 +1,7 @@
 ---
-title: "Medical Data Cleaning Pipeline"
-subtitle: "A reproducible workflow for clinical data preparation"
-author: "Eugene Oyedemi"
+title: "Predicting Diabetes: Logistic Regression and ROC Analysis"
+subtitle: "A reproducible workflow for binary outcome modelling in clinical data"
+author: "Eugene Mofeoluwa"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
   html_document:
@@ -13,6 +13,12 @@ output:
     code_folding: show
     df_print: paged
 ---
+
+<div style="text-align: right;">
+  <img src="Eustat.png" width="120" />
+</div>
+
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
